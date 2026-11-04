@@ -1,96 +1,74 @@
-# SafyMail — preparación de entorno de pruebas Cloudflare
+# SafyMail — entorno de pruebas en Cloudflare
 
-Este procedimiento crea recursos **separados de producción**. No configura DNS, Email Routing ni dominios empresariales.
-
-## Estado y límites
-
-La rama usa actualmente un ID D1 de marcador en `wrangler.toml` y un ID KV de marcador. El almacenamiento de archivos usa Workers KV para evitar activar R2. No ejecutar `db:remote` ni `deploy` hasta sustituir el ID y revisar las variables. El entorno de pruebas debe usar recursos propios:
-
-- D1: `safymail-preview`
-- Workers KV namespace: `safymail-storage-preview`
-- Worker: `safymail-preview`
+Esta guía prepara una instalación de prueba aislada. No presupone recursos preexistentes, no reutiliza IDs de otras instalaciones y no configura DNS ni Email Routing automáticamente.
 
 ## Requisitos
 
-- Cuenta Cloudflare con Workers, D1 y Workers KV habilitados. Workers KV está incluido en el plan Workers Free.
-- Node.js 22+.
-- Acceso autenticado a Wrangler: `npx wrangler login`.
-- No guardar API tokens, claves ni secretos en Git.
+- Node.js 22 o superior.
+- Cuenta Cloudflare con Workers, D1 y Workers KV disponibles.
+- Wrangler autenticado con una cuenta de prueba: npx wrangler login.
+- Un dominio de pruebas que controles, si vas a probar correo real.
+- Una clave API de Resend de prueba, si vas a validar el envío.
 
-## Crear recursos de prueba
+No actives planes de pago ni facturación automática para seguir esta guía.
 
-Desde `./`:
+## Crear recursos aislados
 
-```bash
-npx wrangler login
-npx wrangler d1 create safymail-preview
-npx wrangler kv namespace create safymail-storage-preview
-```
-
-Copia el `database_id` de D1 y el `id` del namespace KV. Coloca el ID KV en `wrangler.toml` como `REPLACE_WITH_KV_NAMESPACE_ID` y el ID D1 en su marcador. No reutilices recursos de producción.
-
-Ejemplo de configuración que debe completarse con el ID real:
-
-```toml
-[env.preview]
-name = "safymail-preview"
-
-[env.preview.vars]
-APP_NAME = "SafyMail"
-ENVIRONMENT = "preview"
-
-[[env.preview.d1_databases]]
-binding = "DB"
-database_name = "safymail-preview"
-database_id = "PEGAR_ID_D1_REAL"
-migrations_dir = "migrations"
-
-[[env.preview.kv_namespaces]]
-binding = "MAIL_STORAGE"
-id = "PEGAR_ID_KV_REAL"
-```
-
-## Migrar y validar
+Crea nombres únicos para tu instalación:
 
 ```bash
-npx wrangler d1 migrations apply safymail-preview --remote --env preview
-npx wrangler deploy --env preview
+npx wrangler d1 create NOMBRE_D1_PRUEBA
+npx wrangler kv namespace create NOMBRE_KV_PRUEBA
 ```
 
-Antes de desplegar, configurar Cloudflare Access para la URL de preview y restringirla a las identidades autorizadas. Añadir los secretos desde terminal; nunca incluirlos en commits:
+Guarda los identificadores devueltos en tu gestor seguro o en el archivo local de instalación. No uses los IDs de otra cuenta, instalación o entorno.
+
+## Generar configuración local
+
+Copia el ejemplo y completa únicamente los datos de tu instalación:
 
 ```bash
-npx wrangler secret put ACCESS_TEAM_DOMAIN --env preview
-npx wrangler secret put ACCESS_AUD --env preview
-npx wrangler secret put RESEND_API_KEY --env preview
-npx wrangler secret put RESEND_WEBHOOK_SECRET --env preview
+cp installation.example.json installation.json
 ```
 
-El proyecto debe tener configurado el middleware de identidad para el entorno preview antes de habilitar el acceso a usuarios reales. Usa claves de prueba de Resend y un dominio de pruebas verificado; no utilices todavía los dominios de CoolBrands Tech, ImportTandem o REWIU.
+El archivo installation.json contiene nombres e identificadores de infraestructura y debe permanecer local. Completa los campos requeridos y ejecuta:
 
-## Pruebas de aceptación antes de DNS
+```bash
+npm install --no-package-lock
+npm run configure:installation
+npm run test:installer
+```
 
-1. Acceso denegado sin identidad válida de Cloudflare Access.
-2. Usuario de una empresa no puede consultar mensajes ni adjuntos de otra.
-3. Recepción solo acepta direcciones provisionadas.
-4. Mensaje entrante y adjuntos quedan guardados en D1/Workers KV.
-5. Mensaje duplicado no crea una segunda fila.
-6. Envío de prueba por Resend y actualización de estado mediante webhook firmado.
-7. Suspender un buzón bloquea acceso y envío sin borrar su historial.
+El script genera wrangler.toml con permisos restrictivos. Ambos archivos están excluidos de Git. No agregues tokens, claves Resend ni secretos de runtime al JSON o al TOML.
 
-## No hacer en esta fase
+## Validar sin desplegar
 
-- No modificar registros MX, SPF, DKIM ni DMARC de dominios empresariales.
-- No activar Email Routing para dominios productivos.
-- No desplegar sobre el Worker de producción.
-- No introducir secretos en el repositorio.
+```bash
+npm run validate:migrations
+npm run test:installer
+npm test
+npm run typecheck
+npm run typecheck:scripts
+npm run validate:security
+npm run validate:pwa
+npx wrangler deploy --dry-run --config wrangler.toml
+```
 
-## Límites importantes de Workers KV en el plan gratuito
+El dry-run valida el paquete sin publicar una nueva versión. Revisa que el Worker y los IDs D1/KV mostrados sean los de prueba antes de cualquier operación remota.
 
-- 1 GB de almacenamiento por cuenta/namespace.
-- 100.000 lecturas al día.
-- 1.000 escrituras, eliminaciones y listados al día; al alcanzar el límite, las operaciones adicionales fallan en el plan Free.
-- Tamaño máximo por valor: 25 MiB. La recepción limita el mensaje MIME original por debajo de ese máximo.
-- KV es eventualmente consistente: una clave nueva puede tardar hasta 60 segundos en propagarse a otras ubicaciones. El sistema usa claves aleatorias e inmutables para los archivos y no sobrescribe objetos existentes.
+## Aplicar migraciones y desplegar la prueba
 
-No activar un plan Workers Paid ni ningún producto que solicite un método de pago. Verificar siempre que la cuenta permanece en Workers Free.
+Solo cuando el dry-run y la revisión de recursos hayan pasado:
+
+```bash
+npx wrangler d1 migrations apply NOMBRE_D1_PRUEBA --remote --config wrangler.toml
+npx wrangler deploy --config wrangler.toml
+```
+
+Configura los secretos con npx wrangler secret put NOMBRE_SECRETO --config wrangler.toml. Introduce cada valor directamente en el prompt seguro de Wrangler. No escribas los valores en comandos, scripts, archivos ni logs.
+
+## Límites gratuitos
+
+Los límites y condiciones de Cloudflare y Resend pueden cambiar y se comparten según cuenta/proveedor. Comprueba los límites actuales en los paneles oficiales antes de iniciar pruebas de carga. La aplicación aplica límites internos, pero eso no garantiza que el proveedor no rechace operaciones al alcanzar cuotas de cuenta.
+
+No continúes si Wrangler indica que el recurso pertenece a otra instalación, si aparece un límite de plan que requiere pago o si no puedes identificar con certeza la cuenta, zona y recursos de destino.

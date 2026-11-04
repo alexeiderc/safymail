@@ -1,0 +1,55 @@
+name: SafyMail CI
+
+on:
+  push:
+    branches:
+      - template/mail-center
+  pull_request:
+    branches:
+      - template/mail-center
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: safymail-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: Validate template
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: npm install --no-package-lock
+
+      - name: Validate installer
+        run: npm run test:installer
+
+      - name: Validate migration history
+        run: npm run validate:migrations
+
+      - name: Run automated tests
+        run: npm test
+
+      - name: Type-check application
+        run: npm run typecheck
+
+      - name: Type-check scripts
+        run: npm run typecheck:scripts
+
+      - name: Validate security invariants
+        run: npm run validate:security
+
+      - name: Validate PWA assets and service worker
+        run: npm run validate:pwa
