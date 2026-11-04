@@ -14,7 +14,7 @@
     "validate:pwa": "node scripts/validate-pwa.mjs",
     "validate:security": "node scripts/validate-security.mjs",
     "configure:installation": "node scripts/configure-installation.mjs",
-    "test:installer": "node scripts/test-configure-installation.mjs",
+    "test:installer": "node scripts/test-configure-installation.mjs && npm run test:bootstrap",
     "dev:control-plane": "wrangler dev --config wrangler.control-plane.toml",
     "db:control-plane:local": "wrangler d1 migrations apply mail-center-control-plane --local --config wrangler.control-plane.toml",
     "db:control-plane:remote": "wrangler d1 migrations apply mail-center-control-plane --remote --config wrangler.control-plane.toml",
@@ -27,7 +27,9 @@
     "setup:email-routing": "tsx scripts/setup-email-routing.ts",
     "plan:custom-domain": "tsx scripts/setup-custom-domain.ts",
     "setup:custom-domain": "tsx scripts/setup-custom-domain.ts",
-    "typecheck:scripts": "tsc --noEmit -p tsconfig.scripts.json"
+    "typecheck:scripts": "tsc --noEmit -p tsconfig.scripts.json",
+    "bootstrap:installation": "node scripts/bootstrap-installation.mjs",
+    "test:bootstrap": "node scripts/test-bootstrap-installation.mjs"
   },
   "dependencies": {
     "hono": "^4.10.4",
