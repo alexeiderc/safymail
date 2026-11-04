@@ -60,13 +60,14 @@ Aplicar migraciones locales:
 npm run db:local
 ```
 
-Aplicar migraciones remotas de preview:
+Aplicar migraciones remotas de una instalación de prueba, después de revisar que installation.json y wrangler.toml apuntan a recursos exclusivos de esa instalación:
 
 ```bash
-npx wrangler d1 migrations apply safymail-preview --remote --env preview
+npm run configure:installation
+npx wrangler d1 migrations apply NOMBRE_D1_DE_PRUEBA --remote --config wrangler.toml
 ```
 
-No ejecutar el despliegue de producción ni modificar DNS como parte de la validación preview.
+Para desplegar la prueba, utiliza únicamente el Worker generado en wrangler.toml y revisa primero el resultado de --dry-run. No uses --env preview: la plantilla genera una configuración por instalación y no define un entorno Wrangler preview compartido. No ejecutar despliegues de producción ni modificar DNS durante la validación.
 
 ## Despliegue automatizado de una instalación
 
@@ -150,7 +151,7 @@ Para generar la clave TOTP localmente y cargarla en preview:
 
 ```bash
 node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))"
-npx wrangler secret put TOTP_ENCRYPTION_KEY --env preview
+npx wrangler secret put TOTP_ENCRYPTION_KEY --config wrangler.toml
 ```
 
 Copia el resultado directamente al prompt de Wrangler y no lo pegues en el chat ni en archivos versionados. La clave debe respaldarse de forma segura: perderla impide descifrar los secretos TOTP existentes.
@@ -159,7 +160,7 @@ Bootstrap inicial:
 
 1. Configura `BOOTSTRAP_TOKEN` en preview (mínimo 32 caracteres).
 2. Abre la aplicación y crea el superadministrador.
-3. Elimina `BOOTSTRAP_TOKEN` al terminar: `npx wrangler secret delete BOOTSTRAP_TOKEN --env preview`.
+3. Elimina `BOOTSTRAP_TOKEN` al terminar: `npx wrangler secret delete BOOTSTRAP_TOKEN --config wrangler.toml`.
 4. Configura `TOTP_ENCRYPTION_KEY`, inicia sesión y activa la verificación en dos pasos desde el webmail.
 5. Guarda los códigos de recuperación fuera de la aplicación. Solo se muestran una vez.
 
