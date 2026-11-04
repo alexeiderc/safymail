@@ -74,8 +74,8 @@ console.log("[bootstrap] Installation " + installationId + " (" + (created.reuse
 let state = await api("/api/installations/" + encodeURIComponent(installationId));
 let status = state.installation?.status;
 if (status === "draft" || status === "failed" || status === "paused") {
-  console.log("[bootstrap] Submitting provider credentials to the encrypted provisioning queue...");
-  await api("/api/installations/" + encodeURIComponent(installationId) + "/provision", {
+  console.log("[bootstrap] Registering encrypted provider credentials and shared webhook...");
+  const provider = await api("/api/provider-accounts", {
     method: "POST",
     body: JSON.stringify({
       credentials: {
@@ -84,6 +84,18 @@ if (status === "draft" || status === "failed" || status === "paused") {
         resendApiKey: env.RESEND_API_KEY
       }
     })
+  });
+  if (typeof provider.providerAccountId !== "string" || !/^[a-f0-9-]{16,64}$/i.test(provider.providerAccountId)) {
+    stop("Control plane returned an invalid provider-account ID. Provisioning was not started.");
+  }
+  await api("/api/installations/" + encodeURIComponent(installationId) + "/provider-account", {
+    method: "POST",
+    body: JSON.stringify({ providerAccountId: provider.providerAccountId })
+  });
+  console.log("[bootstrap] Starting asynchronous resource provisioning...");
+  await api("/api/installations/" + encodeURIComponent(installationId) + "/provision", {
+    method: "POST",
+    body: JSON.stringify({})
   });
   status = "provisioning";
 }
