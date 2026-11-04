@@ -11,7 +11,7 @@ database_id = "{{CONTROL_PLANE_DATABASE_ID}}"
 migrations_dir = "control-plane/migrations"
 
 [vars]
-CONTROL_PLANE_ENV = "development"
+CONTROL_PLANE_ENV = "production"
 CONTROL_PLANE_PUBLIC_URL = "https://{{CONTROL_PLANE_WORKER_HOST}}"
 
 [[queues.producers]]
