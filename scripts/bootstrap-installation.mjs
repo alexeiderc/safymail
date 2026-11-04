@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { deriveInstallationIdempotencyKey, validateBootstrapInput } from "./bootstrap-lib.mjs";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
@@ -11,20 +11,18 @@ function stop(message, code = 1) {
 }
 for (const key of required) if (!env[key]?.trim()) stop("Missing required environment variable: " + key + ". No resources were changed.");
 
-let baseUrl;
-try {
-  const url = new URL(env.CONTROL_PLANE_URL);
-  if (url.protocol !== "https:" || url.username || url.password || url.search || url.hash) throw new Error();
-  baseUrl = url.origin;
-} catch { stop("CONTROL_PLANE_URL must be a trusted HTTPS origin. No resources were changed."); }
-if (!/^[A-Za-z0-9._~-]{32,512}$/.test(env.CONTROL_PLANE_ADMIN_TOKEN)) stop("CONTROL_PLANE_ADMIN_TOKEN has an invalid format.");
-if (!/^[a-f0-9]{32}$/i.test(env.CLOUDFLARE_ACCOUNT_ID)) stop("CLOUDFLARE_ACCOUNT_ID must be a 32-character hexadecimal ID.");
-if (env.CLOUDFLARE_API_TOKEN.length < 20) stop("CLOUDFLARE_API_TOKEN is too short.");
-if (!/^re_[A-Za-z0-9_]{20,}$/.test(env.RESEND_API_KEY)) stop("RESEND_API_KEY does not look like a Resend API key.");
-if (!/^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/i.test(env.DOMAIN)) stop("DOMAIN must be a valid DNS hostname.");
-if (!/^[^\s@]{1,64}@[a-z0-9.-]+\.[a-z]{2,63}$/i.test(env.ADMIN_EMAIL)) stop("ADMIN_EMAIL must be a valid email address.");
-if (!/^[A-Za-z0-9_-]{43}$/.test(env.TOTP_ENCRYPTION_KEY)) stop("TOTP_ENCRYPTION_KEY must be a 32-byte base64url value.");
-
+const validation = validateBootstrapInput({
+  controlPlaneUrl: env.CONTROL_PLANE_URL,
+  controlPlaneAdminToken: env.CONTROL_PLANE_ADMIN_TOKEN,
+  cloudflareAccountId: env.CLOUDFLARE_ACCOUNT_ID,
+  cloudflareApiToken: env.CLOUDFLARE_API_TOKEN,
+  resendApiKey: env.RESEND_API_KEY,
+  domain: env.DOMAIN,
+  adminEmail: env.ADMIN_EMAIL,
+  totpEncryptionKey: env.TOTP_ENCRYPTION_KEY
+});
+if (!validation.valid) stop("Invalid configuration fields: " + validation.errors.join(", ") + ". No resources were changed.");
+const baseUrl = validation.controlPlaneOrigin;
 const timeoutMinutes = Number(env.BOOTSTRAP_TIMEOUT_MINUTES || 30);
 if (!Number.isInteger(timeoutMinutes) || timeoutMinutes < 1 || timeoutMinutes > 60) stop("BOOTSTRAP_TIMEOUT_MINUTES must be between 1 and 60.");
 const domain = env.DOMAIN.toLowerCase();
