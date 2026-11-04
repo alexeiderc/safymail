@@ -1,192 +1,114 @@
-# Arquitectura de la plantilla genérica Mail Center
+# Arquitectura actual de la plantilla SafyMail
 
-Estado: diseño inicial basado en la auditoría de `template/mail-center`.
-Alcance de este documento: definir el flujo, parámetros mínimos, límites de confianza y criterios de automatización antes de modificar la aplicación.
+Estado: implementación en evolución. Este documento describe el código de esta rama; no es una especificación de funciones futuras. SafyMail todavía no debe considerarse listo para producción ni Free-ready hasta cerrar las validaciones indicadas al final.
 
-## 1. Auditoría de la base actual
+## 1. Componentes desplegados
 
-La rama contiene una aplicación de correo funcional como base, no un instalador:
+### Worker de correo por instalación
+
+Cada instalación de correo tiene sus propios recursos y límites de confianza:
 
 - Cloudflare Worker con Hono y TypeScript.
-- D1 para identidades, empresas, dominios, buzones, mensajes, permisos y auditoría.
-- KV para MIME y adjuntos.
-- Recepción mediante el handler Email Worker y PostalMime.
-- Envío, verificación de dominio y webhooks mediante Resend.
-- Webmail, panel administrativo, autenticación propia, MFA TOTP y 20 migraciones.
-- Scripts de validación de migraciones, PWA, HTML y controles de seguridad.
+- D1 dedicada para identidades, empresas, dominios, buzones, mensajes, permisos, sesiones y auditoría.
+- Workers KV para originales MIME y adjuntos.
+- Cloudflare Email Workers para recepción entrante.
+- Resend para envío y eventos de entrega.
+- Webmail y panel administrativo incluidos en public/.
+- Autenticación propia con sesiones seguras y MFA TOTP. El flujo actual no depende de Cloudflare Access ni de JWT de Access.
 
-Capacidades que todavía no existen:
+La configuración de cada Worker se genera desde installation.json y wrangler.template.toml. El archivo generado wrangler.toml es local y debe permanecer ignorado por Git.
 
-- No hay un instalador ni un orquestador de aprovisionamiento.
-- No hay adaptador de Cloudflare API ni creación automatizada de Worker, D1, KV, DNS o Email Routing.
-- El flujo actual de Resend vincula un dominio ya creado en Resend; no crea el dominio.
-- La publicación de registros DNS y la regla de Email Routing se documentan como tareas manuales.
-- Las APIs actuales usan sesión/cookie de la aplicación; no hay API keys de integración ni servidor MCP.
-- Las pruebas son principalmente unitarias y validadores estáticos; falta una suite de aprovisionamiento e integración end-to-end.
+### Control plane compartido
 
-Configuración que no debe heredarse en una plantilla genérica:
+El control plane es un servicio independiente que coordina el onboarding y mantenimiento. Utiliza su propia D1 y Cloudflare Queue. No procesa buzones ni sirve mensajes de clientes.
 
-- `wrangler.toml` contiene nombres e identificadores reales de los entornos Europe Mail Center Preview y Producción.
-- Los nombres de Worker, D1, KV, APP_NAME y ENVIRONMENT están fijados a esta instalación.
-- Los valores e identificadores de recursos deben generarse por instalación. No se deben reutilizar los recursos de Preview ni los de Producción existentes.
+Sus responsabilidades actuales incluyen:
 
-## 2. Modelo operativo recomendado
+- Registrar instalaciones y cuentas proveedoras.
+- Recibir autorización Cloudflare/Resend a través de endpoints autenticados.
+- Cifrar credenciales de proveedor con AES-GCM en una bóveda separada.
+- Provisionar recursos Cloudflare D1/KV y configuración Resend mediante adaptadores.
+- Guardar checkpoints, estados, leases y eventos de auditoría sin registrar secretos.
+- Emitir un manifiesto protegido para el instalador de confianza.
+- Mantener una URL de webhook Resend por cuenta proveedora y distribuir eventos verificados a las instalaciones compatibles.
+- Aplicar límites compartidos de envío mediante un ledger D1 e idempotencia.
+- Despachar mantenimiento periódico mediante una Queue compartida.
 
-**Instancias de correo independientes por instalación.** Cada instalación tendrá su propio Worker, D1, KV, secretos de runtime, dominio y usuarios. Los datos y credenciales de una instalación no se comparten con otra.
+El control plane debe desplegarse y protegerse de forma independiente. Su base D1, CONTROL_PLANE_VAULT_KEY y token administrativo son activos críticos.
 
-El aprovisionamiento se ejecutará desde un **plano de control separado** de los Workers de correo. Este servicio crea y configura los recursos, pero no forma parte del runtime que procesa los buzones. Así, un fallo o compromiso de una instancia de correo no concede acceso directo a las credenciales maestras de Cloudflare o Resend.
+## 2. Flujo de instalación implementado
 
-El plano de control puede administrarse centralmente, pero la gestión central es opcional. La arquitectura no debe exigir que los datos de correo pasen por el plano de control ni que este actúe como proxy de lectura de buzones.
+1. Se registra una instalación con dominio y correo administrador.
+2. Se autoriza una cuenta Cloudflare y una cuenta Resend en el control plane.
+3. El preflight enumera recursos y comprueba límites duros conocidos antes de crear recursos.
+4. El aprovisionamiento se ejecuta de forma asíncrona mediante Cloudflare Queues, con checkpoints, idempotencia, reintentos y locks por instalación y por cuenta Cloudflare.
+5. El control plane crea o registra los recursos dedicados y conserva el estado no sensible.
+6. El instalador de confianza solicita el deployment manifest usando CONTROL_PLANE_ADMIN_TOKEN. Nunca se debe invocar este endpoint desde navegador.
+7. scripts/deploy-installation.mjs genera installation.json local con permisos restrictivos, genera wrangler.toml, aplica migraciones D1, despliega el Worker e instala secretos a través de Wrangler stdin.
+8. El script muestra una sola vez BOOTSTRAP_TOKEN. El operador crea el primer administrador y elimina el token inmediatamente.
+9. DNS, Email Routing, validación de dominio y pruebas end-to-end se completan por etapas explícitas. La instalación permanece en configuring hasta completar los controles requeridos.
 
-## 3. Parámetros de configuración
+El script de despliegue no configura DNS ni Email Routing y no marca por sí mismo una instalación como ready.
 
-### Datos que sí debe aportar el usuario
+## 3. Límites de confianza y credenciales
 
-1. Nombre del proyecto o instalación. Se puede proponer automáticamente a partir del dominio.
-2. Dominio principal.
-3. Correo del administrador inicial.
-4. Autorización de Cloudflare: token de API de alcance mínimo, más selección de cuenta y zona cuando haya más de una.
-5. Clave de Resend con permisos suficientes para crear y verificar dominios y configurar webhooks.
+- El navegador nunca debe recibir tokens de Cloudflare, claves Resend, la clave de bóveda ni secretos runtime.
+- Las credenciales administrativas se entregan al control plane mediante HTTPS y se almacenan cifradas; las credenciales temporales de provisioning expiran y se purgan.
+- El Worker de correo no recibe el token de administración Cloudflare ni la clave maestra del control plane.
+- Los secretos runtime se instalan directamente en Cloudflare Workers mediante Wrangler.
+- TOTP_ENCRYPTION_KEY es exclusivo y persistente por instalación. Perderlo impide descifrar secretos TOTP ya guardados.
+- BOOTSTRAP_TOKEN es temporal y debe eliminarse tras el alta del administrador.
+- MAINTENANCE_TOKEN y RESEND_RELAY_TOKEN son credenciales únicas derivadas por instalación.
+- El control plane solo devuelve el manifiesto de despliegue al operador autenticado; no se debe registrar su respuesta.
 
-### Valores generados automáticamente
+No guardar credenciales en Git, installation.json, wrangler.toml, archivos .env versionados, argumentos de procesos ni logs.
 
-- Slug y nombres únicos del Worker, D1 y KV.
-- Identificadores de los recursos Cloudflare.
-- Configuración del entorno y bindings del Worker.
-- Clave TOTP independiente por instalación.
-- Token de bootstrap de un solo uso y de alta entropía.
-- API keys de la aplicación, claves de firma y secretos auxiliares.
-- Webhook de Resend y URL de destino.
-- Registros DNS que se puedan publicar sin colisionar con servicios existentes.
-- Identificadores de instalación, checkpoints y claves de idempotencia.
+## 4. Recepción, envío y webhooks
 
-### Valores opcionales, con valores predeterminados seguros
+### Recepción
 
-- Región de Resend: `eu-west-1` por defecto.
-- Jurisdicción D1: ofrecer `eu` cuando se requiera residencia europea.
-- Dominios adicionales.
-- Hostname personalizado del webmail.
-- Política de retención, límites de almacenamiento y límites de envío.
+Cloudflare Email Routing entrega mensajes al Worker de correo. El Worker resuelve destinatarios contra buzones y alias activos y almacena mensajes en D1 y MIME/adjuntos en KV. La configuración de DNS y la regla de routing deben validarse para cada dominio.
 
-No se deben pedir IDs de D1/KV, nombres técnicos, tokens bootstrap, claves TOTP, URLs de webhook ni secretos de sesión. El instalador debe generarlos.
+### Envío
 
-## 4. Flujo automatizado de instalación
+Los Workers autentican el envío hacia el relay central con un token exclusivo de instalación. El control plane aplica reservas de cuota compartidas por cuenta Resend, ledger e idempotencia antes de enviar a la API del proveedor. El control plane no expone la clave Resend al Worker de correo.
 
-Estados persistentes de una instalación:
+### Webhooks
 
-`draft → authorizing → discovering → planning → provisioning → configuring → waiting_dns → verifying → bootstrapping → ready`
+Resend permite un endpoint por cuenta Free. El control plane registra un endpoint account-scoped, verifica la firma Svix, deduplica eventos y los distribuye a las instalaciones listas que comparten esa cuenta. La implementación limita el bundle de cuenta proveedora a un máximo de dos dominios administrados. No reemplaza un webhook existente ajeno.
 
-Estados alternativos: `paused`, `failed`, `cancelled`.
+## 5. Cuotas y comportamiento Free
 
-Cada paso debe registrar su estado, resultado no sensible, recurso creado, marca temporal e identificador de idempotencia. Los reintentos deben continuar desde el último checkpoint y reconciliar el estado real del proveedor antes de crear recursos de nuevo.
+- Un Cron central en el control plane limpia credenciales expiradas cada cinco minutos y despacha mantenimiento cada quince minutos.
+- Los Workers de correo no definen Cron propio.
+- El preflight comprueba límites de conteo conocidos de D1, Workers, namespaces KV, dominios y webhooks.
+- El ledger de envío limita los mensajes procesados por Mail Center a 100/día y 3.000/mes UTC por cuenta Resend.
+- El contador no conoce envíos realizados por aplicaciones externas con la misma cuenta; se recomienda dedicar la cuenta Resend a SafyMail.
+- Las cuotas de Requests, CPU, almacenamiento/lecturas/escrituras D1, operaciones/almacenamiento KV y operaciones Queue siguen requiriendo medición y vigilancia.
 
-### Etapas
+Consulta [compatibilidad Free y límites](FREE_TIER_COMPATIBILITY.md). No activar planes de pago ni pay-as-you-go automáticamente.
 
-1. **Recopilación mínima**: validar dominio, correo y nombre; detectar valores derivados.
-2. **Autorización**: validar las credenciales contra los proveedores y descubrir cuentas, zonas y recursos accesibles.
-3. **Preflight**: comprobar si el dominio pertenece a la cuenta elegida, si existe el Worker o si hay recursos con nombres conflictivos, si DNS está alojado en Cloudflare y si hay correo entrante ya configurado.
-4. **Plan de cambios**: producir una vista previa de recursos y registros que se crearán, modificarán o dejarán pendientes. No ejecutar escrituras DNS destructivas de forma implícita.
-5. **Provisioning Cloudflare**: crear D1 y KV, generar configuración del Worker, aplicar migraciones y desplegar el Worker.
-6. **Provisioning Resend**: crear o vincular el dominio, seleccionar región, recuperar los registros requeridos y configurar webhook.
-7. **DNS y recepción**: crear únicamente registros ausentes y no conflictivos, habilitar Email Routing y asociar la regla al Worker cuando la zona y los permisos lo permitan.
-8. **Secretos**: instalar los secretos runtime directamente en Cloudflare; el navegador nunca recibe esos valores.
-9. **Bootstrap**: crear el administrador inicial con un enlace/token de un solo uso y exigir activación de MFA.
-10. **Verificación**: comprobar bindings, migraciones, DNS, verificación Resend, recepción, envío, webhook y aislamiento.
-11. **Entrega**: mostrar URL, estado, recursos, instrucciones residuales y procedimiento de recuperación.
+## 6. Estado real y trabajo pendiente
 
-## 5. Reglas de seguridad y secretos
+Implementado en esta rama:
 
-### Separación de credenciales
+- Aplicación de correo, webmail y panel administrativo.
+- Sesiones propias, PBKDF2, TOTP, aislamiento por empresa y permisos de buzón.
+- D1/KV, recepción MIME, envío Resend, webhooks y reintentos.
+- Control plane, vault cifrado, onboarding, aprovisionamiento asíncrono y checkpoints.
+- Preflight de límites duros conocidos, leases por cuenta, cola de mantenimiento y relay Resend compartido.
+- Generación de configuración por instalación y despliegue desde terminal de confianza.
+- Planificadores de DNS y Email Routing; aplicación de cambios DNS con detección de conflictos y confirmación del dominio.
 
-- El token Cloudflare y la clave Resend de administración solo se reciben y procesan en el backend del plano de control.
-- Nunca se incluyen en HTML, JavaScript, almacenamiento del navegador, URLs, logs, errores, Git ni variables públicas del Worker.
-- La instancia de correo no recibe el token Cloudflare.
-- La clave Resend de administración no se instala en el Worker. Tras el aprovisionamiento se debe generar una clave de envío restringida al dominio, si el proveedor lo permite, y usar esa clave en runtime.
-- Los secretos runtime se instalan como secretos del Worker mediante la API de Cloudflare.
-- Cada instalación genera su propia clave TOTP. Nunca reutilizar la clave de otra instalación.
+Pendiente antes de producción:
 
-### Almacenamiento del plano de control
+- Ejecutar validación integral en cuentas Cloudflare Free nuevas y con recursos preexistentes.
+- Medir cuotas reales de Requests, CPU, D1, KV y Queue bajo carga representativa.
+- Validar instalación completa y recuperación tras fallos en cada checkpoint.
+- Probar recepción, envío, webhook y mantenimiento con Workers desplegados y dominios de prueba.
+- Completar pruebas automatizadas de IDOR/multiempresa y pruebas de integración D1/KV.
+- Validar backups, restauración, rotación de claves, recuperación MFA y respuesta a incidentes.
+- Completar revisión independiente de CSP, XSS, CSRF, abuso de bootstrap y exposición del control plane.
+- Automatizar la transición a ready solo después de health checks, DNS, dominio, bootstrap y correo end-to-end.
 
-Si se necesita conservar credenciales para administrar instalaciones después del alta, usar cifrado envelope con KMS/secret manager, separación por tenant, control de acceso estricto, rotación y revocación. La clave maestra no debe residir en la misma base de datos que los secretos cifrados.
-
-Si la credencial solo se necesita para la instalación inicial, preferir retención efímera y borrado verificable al finalizar. La modalidad de administración persistente debe ser explícita.
-
-### Protección del instalador
-
-- MFA para operadores y RBAC por instalación.
-- Sesiones seguras, CSRF, CSP estricta, protección XSS, rate limits y límites de tamaño.
-- Redacción de secretos en logs, trazas y mensajes de error.
-- No permitir que el usuario proporcione URLs arbitrarias para que el backend las consulte; evitar SSRF.
-- Acciones destructivas separadas, con diff y confirmación explícita.
-- Auditoría de quién autorizó, qué recurso se modificó y qué resultado hubo, sin almacenar valores secretos.
-
-## 6. DNS: comportamiento seguro
-
-Antes de escribir, consultar los registros actuales y clasificarlos por tipo, nombre y contenido.
-
-- No borrar ni sustituir MX existentes automáticamente.
-- No crear un segundo SPF. Si ya existe SPF, proponer la integración correcta y detener el cambio automático hasta validar el contenido.
-- No sobrescribir DKIM, DMARC, MX o TXT que pertenezcan a otro proveedor.
-- Crear registros ausentes solo cuando no haya colisión y la zona esté bajo autorización.
-- Si DNS no está en Cloudflare, generar instrucciones exactas y mantener la instalación en `waiting_dns`.
-- Si el dominio recibe correo de otro proveedor, detener la activación de MX/Email Routing y explicar el impacto antes de cualquier cambio.
-- No activar una regla catch-all sin que el usuario haya visto y aprobado el alcance.
-
-La recepción mediante Cloudflare Email Routing requiere que el DNS del dominio esté en Cloudflare. Cuando no se cumpla, la instalación puede completar el resto, pero debe declarar la recepción como pendiente o no compatible.
-
-## 7. API y MCP
-
-La API pública de cada instalación debe operar sobre los recursos de correo de esa instalación, no sobre credenciales maestras de proveedores.
-
-- API keys opacas, almacenadas como hash, con scopes, expiración, revocación y auditoría.
-- Scopes separados: lectura, escritura, envío, administración de buzones y administración de dominios.
-- MCP remoto como adaptador de herramientas sobre la misma capa de servicios/API, con OAuth o credenciales de integración seguras.
-- Identidad y tenant derivados de la credencial autenticada; nunca confiar en un `company_id` enviado por el cliente.
-- Confirmación reforzada para enviar correo, borrar, suspender o cambiar configuración crítica.
-- Rate limits y límites de envío por instalación.
-- No exponer herramientas MCP para administrar Cloudflare/Resend desde el Worker de correo.
-
-## 8. Fases de implementación
-
-1. **Generalización**: retirar IDs/nombres de la instalación original de la configuración de plantilla; introducir esquema tipado de configuración y generación de nombres.
-2. **Plano de control**: modelo de instalación, estados, checkpoints, idempotencia, auditoría y almacenamiento seguro.
-3. **Adaptadores**: Cloudflare (cuenta, zona, Worker, D1, KV, DNS y Email Routing) y Resend (dominio, registros, verificación y webhooks).
-4. **Orquestador**: preflight, plan de cambios, ejecución, reintentos, reconciliación y recuperación.
-5. **Bootstrap y seguridad**: secretos runtime, administrador inicial, MFA, revocación y endurecimiento.
-6. **API de integración**: scopes, API keys y límites por instalación.
-7. **MCP**: servidor remoto con autorización y herramientas allowlist.
-8. **Pruebas y aceptación**: mocks de proveedores, pruebas de permisos, pruebas de idempotencia, instalación limpia, reanudación tras fallo, DNS conflictivo, e2e de correo y análisis de seguridad.
-
-## 9. Criterios de aceptación
-
-- Una instalación nueva no requiere editar manualmente IDs ni nombres de recursos.
-- Repetir un paso o reanudar un trabajo no crea duplicados.
-- Ningún secreto de proveedor aparece en el bundle del navegador, el Worker de correo, Git o logs.
-- Los recursos de dos instalaciones son independientes.
-- El preflight detecta conflictos y no altera correo/DNS existente sin autorización.
-- La instalación puede pausarse, reanudarse y reportar exactamente qué falta.
-- El Worker queda operativo con el mínimo de tareas manuales y verifica envío/recepción.
-- API y MCP respetan scopes, tenant, límites y auditoría.
-- La plantilla no contiene referencias a los IDs o datos de Europe Mail Center Preview/Producción.
-
-## 10. Decisiones que se mantienen configurables
-
-- Administración central persistente frente a aprovisionamiento efímero.
-- Si la plantilla se ofrecerá solo para zonas Cloudflare o también para DNS externo con pasos manuales.
-- Si la primera versión soportará un dominio o múltiples dominios desde el primer wizard.
-
-Hasta resolver esas decisiones, la implementación debe conservar interfaces desacopladas y no acoplar el producto a una única modalidad de operación.
-
-
-## 11. Control plane — primera implementación
-
-La rama de plantilla incorpora una API de control independiente en `control-plane/`, con su propio archivo Wrangler y esquema D1. No se monta dentro del Worker de correo.
-
-- Registro de instalaciones, checkpoints, auditoría y secretos cifrados en una D1 exclusiva del control plane.
-- Autenticación mediante bearer token cuyo hash SHA-256 se configura como secreto.
-- Los tokens maestros Cloudflare y Resend se reciben en la petición de aprovisionamiento y no se persisten.
-- Los secretos runtime generados se cifran con AES-GCM-256 y una clave independiente `CONTROL_PLANE_VAULT_KEY`.
-- Lease de aprovisionamiento con expiración para evitar ejecuciones concurrentes y permitir recuperación tras interrupciones.
-- Los campos appName y workerName pueden inferirse; para crear una instalación bastan dominio y correo de administración.
-
-Alcance actual: creación de registros de instalación y aprovisionamiento de D1/KV, dominio Resend y webhook. El servicio aún no crea ni despliega el Worker destino, no escribe DNS, no configura Email Routing ni realiza el bootstrap del administrador. La API de aprovisionamiento todavía es síncrona y debe migrarse a una cola/Workflow durable antes de ofrecer instalaciones largas sin supervisión.
+El workflow SafyMail CI valida instalación, migraciones, pruebas, TypeScript, invariantes de seguridad y PWA. El CI no crea recursos, no modifica DNS y no despliega a producción.
