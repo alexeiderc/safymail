@@ -27,8 +27,7 @@ const timeoutMinutes = Number(env.BOOTSTRAP_TIMEOUT_MINUTES || 30);
 if (!Number.isInteger(timeoutMinutes) || timeoutMinutes < 1 || timeoutMinutes > 60) stop("BOOTSTRAP_TIMEOUT_MINUTES must be between 1 and 60.");
 const domain = env.DOMAIN.toLowerCase();
 const adminEmail = env.ADMIN_EMAIL.toLowerCase();
-const idempotencyKey = env.INSTALLATION_IDEMPOTENCY_KEY?.trim() ||
-  "safymail-" + createHash("sha256").update(domain + "\n" + adminEmail).digest("hex").slice(0, 48);
+const idempotencyKey = env.INSTALLATION_IDEMPOTENCY_KEY?.trim() || deriveInstallationIdempotencyKey(domain, adminEmail);
 if (!/^[A-Za-z0-9._:-]{8,128}$/.test(idempotencyKey)) stop("INSTALLATION_IDEMPOTENCY_KEY has an invalid format.");
 
 async function api(pathname, options = {}) {
