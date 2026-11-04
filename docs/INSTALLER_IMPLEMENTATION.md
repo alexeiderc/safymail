@@ -54,7 +54,7 @@ For inbound Email Routing, run `npm run plan:email-routing` with a Cloudflare re
 
 ## End-to-end bootstrap CLI
 
-`npm run bootstrap:installation` orchestrates the existing control-plane API and trusted Worker deployment script. It validates all inputs before network activity, uses a deterministic idempotency key derived from normalized domain and administrator email (override with `INSTALLATION_IDEMPOTENCY_KEY`), creates or reuses the installation, submits provider credentials over HTTPS, polls the control-plane state and invokes `deploy-installation.mjs` only after resources reach `configuring`.
+`npm run bootstrap:installation` orchestrates the existing control-plane API and trusted Worker deployment script. It validates all inputs before network activity, uses a deterministic idempotency key derived from normalized domain and administrator email (override with `INSTALLATION_IDEMPOTENCY_KEY`), creates or reuses the installation, registers the encrypted provider account and shared webhook, attaches that account to the installation, starts provisioning without resubmitting raw credentials, and polls the control-plane state and invokes `deploy-installation.mjs` only after resources reach `configuring`.
 
 Set `BOOTSTRAP_TIMEOUT_MINUTES` to a value from 1 to 60 (default 30). If provisioning is still running at timeout, the command leaves the job intact and can be rerun. It does not re-submit credentials while an installation is already provisioning, does not redeploy an installation marked ready, and never applies DNS, Email Routing or Custom Domain changes. These remain separate reviewed operations.
 
