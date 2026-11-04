@@ -60,3 +60,6 @@ build/
 *.dump
 *.bak
 *.backup
+
+# One-time bootstrap credential (local operator secret)
+.safymail-bootstrap-token
