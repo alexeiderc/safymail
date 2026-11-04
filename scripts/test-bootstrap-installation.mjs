@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import { deriveInstallationIdempotencyKey, validateBootstrapInput } from "./bootstrap-lib.mjs";
 
 const valid = {
@@ -31,4 +32,13 @@ for (const [key, value] of [
   assert.equal(result.valid, false, key + " must be rejected");
   assert.ok(result.errors.includes(key), key + " must be reported");
 }
-console.log("Bootstrap orchestration input and idempotency tests passed.");
+const cli = await readFile(new URL("./bootstrap-installation.mjs", import.meta.url), "utf8");
+const registerIndex = cli.indexOf('api("/api/provider-accounts"');
+const attachIndex = cli.indexOf('api("/api/installations/" + encodeURIComponent(installationId) + "/provider-account"');
+const provisionIndex = cli.indexOf('api("/api/installations/" + encodeURIComponent(installationId) + "/provision"');
+assert.ok(registerIndex >= 0 && attachIndex > registerIndex && provisionIndex > attachIndex,
+  "Provider account and shared webhook must be registered and attached before provisioning starts.");
+const provisionBlock = cli.slice(provisionIndex, cli.indexOf("status = \"provisioning\"", provisionIndex));
+assert.doesNotMatch(provisionBlock, /cloudflareApiToken|resendApiKey/,
+  "Provisioning must consume encrypted provider-account credentials, not resubmit raw secrets.");
+console.log("Bootstrap orchestration input, idempotency and provider-registration tests passed.");
