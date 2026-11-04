@@ -263,3 +263,25 @@ This branch is being converted into a reusable, isolated mail-center template. D
 The generated `wrangler.toml` and `installation.json` are intentionally excluded from Git. Never place Cloudflare API tokens, Resend API keys, webhook secrets or encryption keys in these files. This configuration step does not provision resources or deploy the Worker yet; those capabilities are being implemented in the control plane.
 
 See [the template architecture](docs/TEMPLATE_ARCHITECTURE.md) and [installer implementation notes](docs/INSTALLER_IMPLEMENTATION.md).
+
+
+## Instalación automatizada desde terminal
+
+Después de desplegar el control plane y configurar sus secretos, puedes orquestar una instalación nueva desde una terminal de confianza:
+
+```bash
+export CONTROL_PLANE_URL="https://TU_CONTROL_PLANE.workers.dev"
+export CONTROL_PLANE_ADMIN_TOKEN="..."
+export CLOUDFLARE_ACCOUNT_ID="..."
+export CLOUDFLARE_API_TOKEN="..."
+export RESEND_API_KEY="..."
+export DOMAIN="example.com"
+export ADMIN_EMAIL="admin@example.com"
+export TOTP_ENCRYPTION_KEY="$(node -e "console.log(require('node:crypto').randomBytes(32).toString('base64url'))")"
+npm run bootstrap:installation
+```
+
+El comando registra o recupera la instalación mediante una clave de idempotencia, entrega las credenciales al control plane por HTTPS, solicita el aprovisionamiento, espera el resultado y despliega el Worker al alcanzar el estado `configuring`. Los secretos no se imprimen ni se pasan como argumentos de comandos. La clave `TOTP_ENCRYPTION_KEY` debe guardarse en un gestor seguro y reutilizarse en cada despliegue de esa instalación.
+
+Por seguridad, esta automatización no cambia DNS, Email Routing ni Custom Domains. Ejecuta primero los comandos `plan:dns`, `plan:email-routing` y `plan:custom-domain`; la aplicación de cambios sigue requiriendo confirmación explícita. El alta del primer administrador y la activación de MFA también deben completarse antes de considerar la instalación operativa.
+
