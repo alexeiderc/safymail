@@ -147,7 +147,7 @@ Los secretos se configuran directamente con Wrangler; nunca deben guardarse en G
 - `CONTROL_PLANE_URL` e `INSTALLATION_ID`: variables de runtime generadas por el instalador.
 - `RESEND_WEBHOOK_SECRET`: secreto de firma Svix del webhook Resend.
 
-Para generar la clave TOTP localmente y cargarla en preview:
+Para generar la clave TOTP localmente y cargarla en el Worker de prueba:
 
 ```bash
 node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))"
@@ -158,7 +158,7 @@ Copia el resultado directamente al prompt de Wrangler y no lo pegues en el chat 
 
 Bootstrap inicial:
 
-1. Configura `BOOTSTRAP_TOKEN` en preview (mínimo 32 caracteres).
+1. Configura `BOOTSTRAP_TOKEN` en el Worker de prueba (mínimo 32 caracteres).
 2. Abre la aplicación y crea el superadministrador.
 3. Elimina `BOOTSTRAP_TOKEN` al terminar: `npx wrangler secret delete BOOTSTRAP_TOKEN --config wrangler.toml`.
 4. Configura `TOTP_ENCRYPTION_KEY`, inicia sesión y activa la verificación en dos pasos desde el webmail.
@@ -181,7 +181,7 @@ La comprobación DNS valida que el MX apunte a los servidores de Cloudflare; no 
 
 ### Envío
 
-1. Configura `RESEND_API_KEY` en preview.
+1. Configura `RESEND_API_KEY` en el Worker de prueba.
 2. Desde el panel, crea la configuración del dominio en Resend.
 3. Publica los registros DNS devueltos por Resend. Se solicita región `eu-west-1`.
 4. Verifica el dominio desde el panel; el estado solo se marca como verificado cuando Resend confirma el dominio.
